@@ -1,0 +1,5 @@
+var render = function render(){var _vm=this,_c=_vm._self._c;return _c('div',{staticClass:"m-drainage-root"},[_c('el-dialog',{attrs:{"visible":_vm.isShowDrainageDialog,"width":"459px","top":"120px","custom-class":"m-drainage-dialog","modal-append-to-body":false,"show-close":false,"close-on-click-modal":false,"center":"","title":"🎉 New Product Alert! 🎉"},on:{"update:visible":function($event){_vm.isShowDrainageDialog=$event}}},[_c('div',{staticClass:"m-drainage"},[_c('div',{staticClass:"modal-content"},[_c('div',{staticClass:"modal-body"},[_vm._v(" Exciting news! WhatsApp Privacy Tool new product has just launched."),_c('br'),_c('br'),_vm._v(" Click the link below to install it "),_c('strong',[_vm._v("for free")]),_vm._v("!"),_c('br'),_c('br'),_vm._v(" Enjoy "),_c('strong',[_vm._v("free access")]),_vm._v(" to all features and content."),_c('br'),_c('br'),_vm._v(" Hurry, this exclusive offer is only available through this link! ")]),_c('div',{staticClass:"modal-footer"},[_c('button',{on:{"click":_vm.openUrl}},[_vm._v("Install for Free")])])])])])],1)
+}
+var staticRenderFns = []
+
+export { render, staticRenderFns }

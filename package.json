@@ -1,0 +1,17 @@
+{
+  "name": "wasender2",
+  "version": "1.0.0",
+  "description": "",
+  "main": "WAPIAPI.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "node scripts/build.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "esbuild": "^0.25.5"
+  }
+}
