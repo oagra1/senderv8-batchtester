@@ -9,7 +9,7 @@ import {
   destroy
 } from './recordApi.js'
 import 'element-ui/lib/theme-chalk/index.css'
-import './mask.css'
+import './mask.js'
 import ButtonPage from './ButtonPage.vue'
 let vm = null
 Vue.use(ElementUI)
