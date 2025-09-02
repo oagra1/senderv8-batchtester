@@ -12,36 +12,81 @@
     return val;
   };
 
+  let currentPause = 0;
+  let currentEvery = 0;
+
+  console.debug('[pro-batching-ui] boot');
+
+  function applyValuesToInputs() {
+    const container = document.querySelector('.pro-batching-ui');
+    if (!container) return;
+    const inputs = container.querySelectorAll('input');
+    if (inputs[0]) inputs[0].value = currentPause || '';
+    if (inputs[1]) inputs[1].value = currentEvery || '';
+  }
+
   function loadValues(cb) {
     try {
       chrome.storage.local.get([STORAGE_KEYS.pause, STORAGE_KEYS.every], (res) => {
-        cb({
-          pause: clamp(res[STORAGE_KEYS.pause]),
-          every: clamp(res[STORAGE_KEYS.every]),
-        });
+        currentPause = clamp(res[STORAGE_KEYS.pause]);
+        currentEvery = clamp(res[STORAGE_KEYS.every]);
+        console.debug('[pro-batching-ui] values loaded', currentPause, currentEvery);
+        applyValuesToInputs();
+        cb && cb();
       });
     } catch (e) {
-      cb({ pause: 0, every: 0 });
+      cb && cb();
     }
   }
 
-  function saveValues(pause, every) {
+  function saveValues() {
     const data = {};
-    data[STORAGE_KEYS.pause] = clamp(pause);
-    data[STORAGE_KEYS.every] = clamp(every);
+    data[STORAGE_KEYS.pause] = currentPause;
+    data[STORAGE_KEYS.every] = currentEvery;
     try {
       chrome.storage.local.set(data);
     } catch (e) {}
   }
 
-  function smallestCommonAncestor(a, b) {
-    const parents = new Set();
-    for (let n = a; n; n = n.parentElement) parents.add(n);
-    for (let n = b; n; n = n.parentElement) if (parents.has(n)) return n;
-    return null;
+  function setValues(pause, every) {
+    currentPause = clamp(pause);
+    currentEvery = clamp(every);
+    saveValues();
   }
 
-  function createUI(values, ancestor) {
+  // Patch sendMessage at boot
+  if (chrome.runtime && chrome.runtime.sendMessage) {
+    const original = chrome.runtime.sendMessage.bind(chrome.runtime);
+    chrome.runtime.sendMessage = function (...args) {
+      try {
+        const msg = args[0];
+        const pause = currentPause;
+        const every = currentEvery;
+        const visited = new Set();
+        const inject = (obj) => {
+          if (!obj || typeof obj !== 'object' || visited.has(obj)) return;
+          visited.add(obj);
+          const isPro =
+            obj.sendMessageType === 'pro' ||
+            (Object.prototype.hasOwnProperty.call(obj, 'minNum') &&
+              Object.prototype.hasOwnProperty.call(obj, 'maxNum'));
+          if (isPro) {
+            if (obj.batchPauseSeconds === undefined) obj.batchPauseSeconds = pause;
+            if (obj.batchEveryMessages === undefined) obj.batchEveryMessages = every;
+            console.debug('[pro-batching-ui] payload extended', pause, every);
+          }
+          for (const key in obj) {
+            if (typeof obj[key] === 'object') inject(obj[key]);
+          }
+        };
+        inject(msg);
+      } catch (e) {}
+      return original(...args);
+    };
+    console.debug('[pro-batching-ui] patch active');
+  }
+
+  function createUI(anchor) {
     const container = document.createElement('div');
     container.className = 'pro-batching-ui';
     container.style.marginTop = '8px';
@@ -57,7 +102,7 @@
     pauseInput.step = '1';
     pauseInput.style.width = '80px';
     pauseInput.style.marginRight = '8px';
-    if (values.pause) pauseInput.value = values.pause;
+    if (currentPause) pauseInput.value = currentPause;
 
     const everyLabel = document.createElement('label');
     everyLabel.textContent = 'a cada (mensagens)';
@@ -69,7 +114,7 @@
     everyInput.max = '86400';
     everyInput.step = '1';
     everyInput.style.width = '80px';
-    if (values.every) everyInput.value = values.every;
+    if (currentEvery) everyInput.value = currentEvery;
 
     const help = document.createElement('div');
     help.textContent = 'Pausa X segundos a cada Y mensagens (somente Pró)';
@@ -78,7 +123,7 @@
     help.style.marginTop = '4px';
 
     function onChange() {
-      saveValues(pauseInput.value, everyInput.value);
+      setValues(pauseInput.value, everyInput.value);
     }
 
     pauseInput.addEventListener('change', onChange);
@@ -90,59 +135,30 @@
     container.appendChild(everyInput);
     container.appendChild(help);
 
-    ancestor.insertAdjacentElement('afterend', container);
-
-    return {
-      getPause: () => clamp(pauseInput.value),
-      getEvery: () => clamp(everyInput.value),
-    };
+    anchor.insertAdjacentElement('afterend', container);
   }
 
-  function patchSendMessage(getters) {
-    if (!chrome.runtime || !chrome.runtime.sendMessage) return;
-    const original = chrome.runtime.sendMessage.bind(chrome.runtime);
-    chrome.runtime.sendMessage = function (...args) {
-      try {
-        const msg = args[0];
-        const pause = getters.getPause();
-        const every = getters.getEvery();
-        function inject(obj) {
-          if (!obj || typeof obj !== 'object') return;
-          if (
-            obj.sendMessageType === 'pro' ||
-            (Object.prototype.hasOwnProperty.call(obj, 'minNum') &&
-              Object.prototype.hasOwnProperty.call(obj, 'maxNum'))
-          ) {
-            obj.batchPauseSeconds = pause;
-            obj.batchEveryMessages = every;
-          }
-          for (const key in obj) {
-            if (typeof obj[key] === 'object') inject(obj[key]);
-          }
-        }
-        inject(msg);
-      } catch (e) {}
-      return original(...args);
-    };
+  function tryInject() {
+    const anchor = document.querySelector(
+      '.send-step.send-step-2.switchBack .el-row'
+    );
+    if (anchor && !document.querySelector('.pro-batching-ui')) {
+      console.debug('[pro-batching-ui] anchor found');
+      createUI(anchor);
+      return true;
+    }
+    return false;
   }
 
-  function init() {
-    const intervalInputs = document.querySelectorAll('.numSelect');
-    if (intervalInputs.length < 2) return false;
-    const ancestor = smallestCommonAncestor(intervalInputs[0], intervalInputs[1]);
-    if (!ancestor) return false;
-
-    loadValues((values) => {
-      const getters = createUI(values, ancestor);
-      patchSendMessage(getters);
+  const app = document.getElementById('app');
+  if (app) {
+    const observer = new MutationObserver(() => {
+      if (tryInject()) observer.disconnect();
     });
-    return true;
+    observer.observe(app, { childList: true, subtree: true });
+    // in case DOM is already ready
+    tryInject();
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
-    const timer = setInterval(() => {
-      if (init()) clearInterval(timer);
-    }, 500);
-  });
+  loadValues();
 })();
-
