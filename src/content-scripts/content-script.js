@@ -58,14 +58,11 @@ let visitor = ua('UA-140648082-17')
 // 双重标识来确保inject不会多次加载
 let injectRepeatFlag = true
 
-// Batching Pro configuration
-const DEFAULT_BATCH_PAUSE = 30
-const DEFAULT_BATCH_EVERY = 10
-let batchingConfig = {
-  enabled: false,
-  pauseSeconds: DEFAULT_BATCH_PAUSE,
-  everyMessages: DEFAULT_BATCH_EVERY
-}
+// Batching configuration loaded from storage
+const DEFAULT_BATCH_PAUSE = 240
+const DEFAULT_BATCH_EVERY = 80
+let batchPauseSeconds = DEFAULT_BATCH_PAUSE
+let batchEveryMessages = DEFAULT_BATCH_EVERY
 
 function clampBatch(val, def, max) {
   val = parseInt(val, 10)
@@ -77,15 +74,14 @@ function clampBatch(val, def, max) {
 
 try {
   chrome.storage.local.get(
-    ['isBatchingEnabled', 'batchPauseSeconds', 'batchEveryMessages'],
+    ['batchPauseSeconds', 'batchEveryMessages'],
     (res) => {
-      batchingConfig.enabled = Boolean(res.isBatchingEnabled)
-      batchingConfig.pauseSeconds = clampBatch(
+      batchPauseSeconds = clampBatch(
         res.batchPauseSeconds,
         DEFAULT_BATCH_PAUSE,
         300
       )
-      batchingConfig.everyMessages = clampBatch(
+      batchEveryMessages = clampBatch(
         res.batchEveryMessages,
         DEFAULT_BATCH_EVERY,
         100
@@ -94,16 +90,14 @@ try {
   )
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return
-    if (changes.isBatchingEnabled)
-      batchingConfig.enabled = changes.isBatchingEnabled.newValue
     if (changes.batchPauseSeconds)
-      batchingConfig.pauseSeconds = clampBatch(
+      batchPauseSeconds = clampBatch(
         changes.batchPauseSeconds.newValue,
         DEFAULT_BATCH_PAUSE,
         300
       )
     if (changes.batchEveryMessages)
-      batchingConfig.everyMessages = clampBatch(
+      batchEveryMessages = clampBatch(
         changes.batchEveryMessages.newValue,
         DEFAULT_BATCH_EVERY,
         100
@@ -1013,11 +1007,8 @@ async function main(
         return
       }
       if (indexCount < phoneNumListLen) {
-        // 睡眠需要等待的时间，每发80条消息休眠3~5min
-        if ((indexCount - 1) % 80 === 79) {
-          await sleepBySeconds(180, 300)
-        } else if (indexCount === 0 || (!sendStatus && permissionStatus === 'Pro')) {
-          //第一次发送等待时间设置为0
+        if (indexCount === 0 || (!sendStatus && permissionStatus === 'Pro')) {
+          // 第一次发送等待时间设置为0
           await sleepBySeconds(0, 0)
         } else {
           await sleepBySeconds(minNum, maxNum)
@@ -1037,15 +1028,11 @@ async function main(
         }
 
         if (
-          batchingConfig.enabled &&
-          batchingConfig.pauseSeconds > 0 &&
-          batchingConfig.everyMessages > 0 &&
-          indexCount % batchingConfig.everyMessages === 0
+          batchPauseSeconds > 0 &&
+          batchEveryMessages > 0 &&
+          indexCount % batchEveryMessages === 0
         ) {
-          await sleepBySeconds(
-            batchingConfig.pauseSeconds,
-            batchingConfig.pauseSeconds
-          )
+          await sleepBySeconds(batchPauseSeconds, batchPauseSeconds)
           if (stopFlag == true || stopFlagSimple == true) {
             chrome.storage.local.set({
               stopFlag: true,
