@@ -58,6 +58,59 @@ let visitor = ua('UA-140648082-17')
 // 双重标识来确保inject不会多次加载
 let injectRepeatFlag = true
 
+// Batching Pro configuration
+const DEFAULT_BATCH_PAUSE = 30
+const DEFAULT_BATCH_EVERY = 10
+let batchingConfig = {
+  enabled: false,
+  pauseSeconds: DEFAULT_BATCH_PAUSE,
+  everyMessages: DEFAULT_BATCH_EVERY
+}
+
+function clampBatch(val, def, max) {
+  val = parseInt(val, 10)
+  if (isNaN(val)) return def
+  if (val < 1) return 1
+  if (val > max) return max
+  return val
+}
+
+try {
+  chrome.storage.local.get(
+    ['isBatchingEnabled', 'batchPauseSeconds', 'batchEveryMessages'],
+    (res) => {
+      batchingConfig.enabled = Boolean(res.isBatchingEnabled)
+      batchingConfig.pauseSeconds = clampBatch(
+        res.batchPauseSeconds,
+        DEFAULT_BATCH_PAUSE,
+        300
+      )
+      batchingConfig.everyMessages = clampBatch(
+        res.batchEveryMessages,
+        DEFAULT_BATCH_EVERY,
+        100
+      )
+    }
+  )
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return
+    if (changes.isBatchingEnabled)
+      batchingConfig.enabled = changes.isBatchingEnabled.newValue
+    if (changes.batchPauseSeconds)
+      batchingConfig.pauseSeconds = clampBatch(
+        changes.batchPauseSeconds.newValue,
+        DEFAULT_BATCH_PAUSE,
+        300
+      )
+    if (changes.batchEveryMessages)
+      batchingConfig.everyMessages = clampBatch(
+        changes.batchEveryMessages.newValue,
+        DEFAULT_BATCH_EVERY,
+        100
+      )
+  })
+} catch (e) {}
+
 sendMessage(CONTENT_TO_BACKGROUND_Z_BASE_TYPE, { zbaseType: 'zbase-content-init' }, 'background')
 // content加载的时候重置一下这四个参数。
 chrome.storage.local
@@ -969,7 +1022,6 @@ async function main(
         } else {
           await sleepBySeconds(minNum, maxNum)
         }
-
         if (stopFlag == true || stopFlagSimple == true) {
           chrome.storage.local.set({
             stopFlag: true,
@@ -982,6 +1034,31 @@ async function main(
             disabledSendingFlag: false
           })
           return
+        }
+
+        if (
+          batchingConfig.enabled &&
+          batchingConfig.pauseSeconds > 0 &&
+          batchingConfig.everyMessages > 0 &&
+          indexCount % batchingConfig.everyMessages === 0
+        ) {
+          await sleepBySeconds(
+            batchingConfig.pauseSeconds,
+            batchingConfig.pauseSeconds
+          )
+          if (stopFlag == true || stopFlagSimple == true) {
+            chrome.storage.local.set({
+              stopFlag: true,
+              stopFlagSimple: true,
+              anShowWaitSendTip: false
+            })
+            chrome.runtime.sendMessage({
+              stopFlag: true,
+              stopFlagSimple: true,
+              disabledSendingFlag: false
+            })
+            return
+          }
         }
         // 最后一条消息，触发弹框
       } else if (permissionStatus === 'Free' && countFail > 0) {
