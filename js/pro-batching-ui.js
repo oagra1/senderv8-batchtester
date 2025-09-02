@@ -1,39 +1,57 @@
 // Runtime injection for Pro batching UI and payload bridging
 (function () {
   const STORAGE_KEYS = {
+    enabled: 'isBatchingEnabled',
     pause: 'batchPauseSeconds',
     every: 'batchEveryMessages',
   };
 
-  const clamp = (val) => {
+  const clamp = (val, max, def) => {
     val = parseInt(val, 10);
-    if (isNaN(val) || val <= 0) return 0;
-    if (val > 86400) return 86400;
+    if (isNaN(val)) return def;
+    if (val < 1) return 1;
+    if (val > max) return max;
     return val;
   };
 
-  let currentPause = 0;
-  let currentEvery = 0;
+  const DEFAULT_PAUSE = 30;
+  const DEFAULT_EVERY = 10;
+
+  let currentEnabled = false;
+  let currentPause = DEFAULT_PAUSE;
+  let currentEvery = DEFAULT_EVERY;
 
   console.debug('[pro-batching-ui] boot');
 
   function applyValuesToInputs() {
     const container = document.querySelector('.pro-batching-ui');
     if (!container) return;
-    const inputs = container.querySelectorAll('input');
-    if (inputs[0]) inputs[0].value = currentPause || '';
-    if (inputs[1]) inputs[1].value = currentEvery || '';
+    const toggle = container.querySelector('input[type="checkbox"]');
+    const numbers = container.querySelectorAll('input[type="number"]');
+    if (toggle) toggle.checked = currentEnabled;
+    if (numbers[0]) numbers[0].value = currentPause;
+    if (numbers[1]) numbers[1].value = currentEvery;
+    numbers.forEach((el) => (el.disabled = !currentEnabled));
   }
 
   function loadValues(cb) {
     try {
-      chrome.storage.local.get([STORAGE_KEYS.pause, STORAGE_KEYS.every], (res) => {
-        currentPause = clamp(res[STORAGE_KEYS.pause]);
-        currentEvery = clamp(res[STORAGE_KEYS.every]);
-        console.debug('[pro-batching-ui] values loaded', currentPause, currentEvery);
+      chrome.storage.local.get(
+        [STORAGE_KEYS.enabled, STORAGE_KEYS.pause, STORAGE_KEYS.every],
+        (res) => {
+          currentEnabled = Boolean(res[STORAGE_KEYS.enabled]);
+          currentPause = clamp(res[STORAGE_KEYS.pause], 300, DEFAULT_PAUSE);
+          currentEvery = clamp(res[STORAGE_KEYS.every], 100, DEFAULT_EVERY);
+          console.debug(
+            '[pro-batching-ui] values loaded',
+            currentEnabled,
+            currentPause,
+            currentEvery
+          );
         applyValuesToInputs();
         cb && cb();
-      });
+        }
+      );
     } catch (e) {
       cb && cb();
     }
@@ -41,6 +59,7 @@
 
   function saveValues() {
     const data = {};
+    data[STORAGE_KEYS.enabled] = currentEnabled;
     data[STORAGE_KEYS.pause] = currentPause;
     data[STORAGE_KEYS.every] = currentEvery;
     try {
@@ -49,9 +68,16 @@
   }
 
   function setValues(pause, every) {
-    currentPause = clamp(pause);
-    currentEvery = clamp(every);
+    currentPause = clamp(pause, 300, DEFAULT_PAUSE);
+    currentEvery = clamp(every, 100, DEFAULT_EVERY);
     saveValues();
+    applyValuesToInputs();
+  }
+
+  function setEnabled(enabled) {
+    currentEnabled = Boolean(enabled);
+    saveValues();
+    applyValuesToInputs();
   }
 
   // Patch sendMessage at boot
@@ -60,6 +86,7 @@
     chrome.runtime.sendMessage = function (...args) {
       try {
         const msg = args[0];
+        const enabled = currentEnabled;
         const pause = currentPause;
         const every = currentEvery;
         const visited = new Set();
@@ -71,9 +98,15 @@
             (Object.prototype.hasOwnProperty.call(obj, 'minNum') &&
               Object.prototype.hasOwnProperty.call(obj, 'maxNum'));
           if (isPro) {
+            if (obj.isBatchingEnabled === undefined) obj.isBatchingEnabled = enabled;
             if (obj.batchPauseSeconds === undefined) obj.batchPauseSeconds = pause;
             if (obj.batchEveryMessages === undefined) obj.batchEveryMessages = every;
-            console.debug('[pro-batching-ui] payload extended', pause, every);
+            console.debug(
+              '[pro-batching-ui] payload extended',
+              enabled,
+              pause,
+              every
+            );
           }
           for (const key in obj) {
             if (typeof obj[key] === 'object') inject(obj[key]);
@@ -91,6 +124,15 @@
     container.className = 'pro-batching-ui';
     container.style.marginTop = '8px';
 
+    const toggleLabel = document.createElement('label');
+    toggleLabel.textContent = 'Batching Pro';
+    toggleLabel.style.marginRight = '4px';
+
+    const toggleInput = document.createElement('input');
+    toggleInput.type = 'checkbox';
+    toggleInput.style.marginRight = '8px';
+    toggleInput.checked = currentEnabled;
+
     const pauseLabel = document.createElement('label');
     pauseLabel.textContent = 'Pausar (segundos)';
     pauseLabel.style.marginRight = '4px';
@@ -98,23 +140,23 @@
     const pauseInput = document.createElement('input');
     pauseInput.type = 'number';
     pauseInput.min = '1';
-    pauseInput.max = '86400';
+    pauseInput.max = '300';
     pauseInput.step = '1';
     pauseInput.style.width = '80px';
     pauseInput.style.marginRight = '8px';
-    if (currentPause) pauseInput.value = currentPause;
+    pauseInput.value = currentPause;
 
     const everyLabel = document.createElement('label');
-    everyLabel.textContent = 'a cada (mensagens)';
+    everyLabel.textContent = 'A cada (mensagens)';
     everyLabel.style.marginRight = '4px';
 
     const everyInput = document.createElement('input');
     everyInput.type = 'number';
     everyInput.min = '1';
-    everyInput.max = '86400';
+    everyInput.max = '100';
     everyInput.step = '1';
     everyInput.style.width = '80px';
-    if (currentEvery) everyInput.value = currentEvery;
+    everyInput.value = currentEvery;
 
     const help = document.createElement('div');
     help.textContent = 'Pausa X segundos a cada Y mensagens (somente Pró)';
@@ -126,9 +168,14 @@
       setValues(pauseInput.value, everyInput.value);
     }
 
+    toggleInput.addEventListener('change', () => {
+      setEnabled(toggleInput.checked);
+    });
     pauseInput.addEventListener('change', onChange);
     everyInput.addEventListener('change', onChange);
 
+    container.appendChild(toggleLabel);
+    container.appendChild(toggleInput);
     container.appendChild(pauseLabel);
     container.appendChild(pauseInput);
     container.appendChild(everyLabel);
